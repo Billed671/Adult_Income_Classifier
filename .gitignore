@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Data
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Models
+models/*.joblib
+models/*.pkl
+models/*.json
+
+# MLflow
+mlruns/
+mlflow.db
+
+# Airflow
+services/airflow/logs/*
+!services/airflow/logs/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Env
+.env
