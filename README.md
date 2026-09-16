@@ -141,8 +141,8 @@ Step 1. Clone the repository
 
 Open a terminal and run:
 
-    git clone https://github.com/<your-username>/adult-income-mlops.git
-    cd adult-income-mlops
+    git clone https://github.com/Billed671/Adult_Income_Classifier.git
+    cd Adult_Income_Classifier
 
 Replace <your-username> with your GitHub username. After this command, the working directory of your terminal is the root of the repository.
 
