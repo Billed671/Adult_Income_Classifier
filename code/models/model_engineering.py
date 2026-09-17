@@ -2,13 +2,15 @@
 Stage 2: Model Engineering
 - feature engineering (OneHot + Scale)
 - tune CatBoost, XGBoost, LightGBM with Optuna
-- log to MLflow
+- log to MLflow (SQLite backend)
 - save best pipeline to models/best_model.joblib
 """
 import os
 import json
 import logging
 import warnings
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import joblib
@@ -29,10 +31,14 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-PROCESSED_DIR = "data/processed"
-MODELS_DIR = "models"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
+MODELS_DIR = PROJECT_ROOT / "models"
+MLFLOW_DB = PROJECT_ROOT / "mlflow.db"
 MLFLOW_EXPERIMENT = "adult_income"
-N_TRIALS = 15  # увеличишь, если хочешь лучше качество
+
+N_TRIALS = 5
 
 NUMERIC_COLS = ["age", "fnlwgt", "education-num",
                 "capital-gain", "capital-loss", "hours-per-week"]
@@ -41,9 +47,17 @@ CATEGORICAL_COLS = ["workclass", "education", "marital-status", "occupation",
 TARGET = "income"
 
 
+def setup_mlflow():
+    """Настраивает MLflow на SQLite-бэкенд (файловый больше не поддерживается)."""
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", f"sqlite:///{MLFLOW_DB}")
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+    log.info(f"MLflow tracking URI: {tracking_uri}")
+
+
 def load_data():
-    train = pd.read_csv(os.path.join(PROCESSED_DIR, "train.csv"))
-    test = pd.read_csv(os.path.join(PROCESSED_DIR, "test.csv"))
+    train = pd.read_csv(PROCESSED_DIR / "train.csv")
+    test = pd.read_csv(PROCESSED_DIR / "test.csv")
     X_train, y_train = train.drop(columns=[TARGET]), train[TARGET]
     X_test, y_test = test.drop(columns=[TARGET]), test[TARGET]
     return X_train, y_train, X_test, y_test
@@ -79,18 +93,22 @@ def suggest_params(model_name, trial):
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
             "min_child_samples": trial.suggest_int("min_child_samples", 5, 50),
         }
-    raise ValueError(model_name)
+    raise ValueError(f"Unknown model: {model_name}")
 
 
 def build_model(model_name, params):
     if model_name == "catboost":
         return CatBoostClassifier(verbose=0, random_state=42, **params)
     if model_name == "xgboost":
-        return XGBClassifier(use_label_encoder=False, eval_metric="logloss",
-                             random_state=42, n_jobs=-1, **params)
+        return XGBClassifier(
+            eval_metric="logloss",
+            random_state=42,
+            n_jobs=-1,
+            **params,
+        )
     if model_name == "lightgbm":
-        return LGBMClassifier(random_state=42, n_jobs=-1, **params)
-    raise ValueError(model_name)
+        return LGBMClassifier(random_state=42, n_jobs=-1, verbose=-1, **params)
+    raise ValueError(f"Unknown model: {model_name}")
 
 
 def tune_model(model_name, X_train, y_train, X_test, y_test):
@@ -114,7 +132,6 @@ def tune_model(model_name, X_train, y_train, X_test, y_test):
     best_auc = study.best_value
     log.info(f"{model_name} best AUC={best_auc:.4f} params={best_params}")
 
-    # refit with best params
     pipe = Pipeline([
         ("preprocessor", build_preprocessor()),
         ("clf", build_model(model_name, best_params)),
@@ -132,9 +149,8 @@ def tune_model(model_name, X_train, y_train, X_test, y_test):
 
 
 def main():
-    mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "file:./mlruns"))
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
-    os.makedirs(MODELS_DIR, exist_ok=True)
+    setup_mlflow()
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     X_train, y_train, X_test, y_test = load_data()
     log.info(f"Train: {X_train.shape}, Test: {X_test.shape}")
@@ -144,13 +160,27 @@ def main():
     best_pipeline = None
     best_name = None
     best_metrics = None
+    SKOPS_TRUSTED = [
+        "catboost.core.CatBoostClassifier",
+        "xgboost.core.XGBClassifier",
+        "lightgbm.sklearn.LGBMClassifier",
+    ]
 
     for name in ["catboost", "xgboost", "lightgbm"]:
         with mlflow.start_run(run_name=name):
             pipe, metrics, params = tune_model(name, X_train, y_train, X_test, y_test)
+
             mlflow.log_params({f"best_{k}": v for k, v in params.items()})
             mlflow.log_metrics(metrics)
-            mlflow.sklearn.log_model(pipe, artifact_path="model")
+
+            try:
+                mlflow.sklearn.log_model(
+                    sk_model=pipe,
+                    name="model",
+                    skops_trusted_types=SKOPS_TRUSTED,
+                )
+            except Exception as e:
+                log.warning(f"Could not log {name} to MLflow: {e}")
 
             results[name] = {"metrics": metrics, "params": params}
             log.info(f"{name} -> {metrics}")
@@ -161,8 +191,7 @@ def main():
                 best_name = name
                 best_metrics = metrics
 
-    # save the best
-    out_path = os.path.join(MODELS_DIR, "best_model.joblib")
+    out_path = MODELS_DIR / "best_model.joblib"
     joblib.dump({
         "pipeline": best_pipeline,
         "model_name": best_name,
@@ -172,7 +201,7 @@ def main():
     }, out_path)
     log.info(f"Best model: {best_name} (AUC={best_score:.4f}) saved to {out_path}")
 
-    with open(os.path.join(MODELS_DIR, "metrics.json"), "w") as f:
+    with open(MODELS_DIR / "metrics.json", "w") as f:
         json.dump({"best": best_name, "all": results}, f, indent=2)
 
 
