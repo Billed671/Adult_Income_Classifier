@@ -6,7 +6,7 @@ API_URL = os.environ.get("API_URL", "http://api:8000/predict")
 
 st.set_page_config(page_title="Adult Income Predictor", page_icon="💼")
 st.title("💼 Adult Income Predictor")
-st.write("Заполни поля и нажми **Predict** — узнаешь, зарабатывает ли человек >50K.")
+st.write("Fill in the fields and click **Predict** — you’ll find out whether the person earns >50K.")
 
 with st.form("input_form"):
     col1, col2 = st.columns(2)
