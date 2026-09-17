@@ -5,11 +5,13 @@ Full MLOps pipeline:
 3) deployment (docker compose up --build)
 Runs every 5 minutes.
 """
+import os
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 
 PROJECT_DIR = "/opt/airflow/project"
+HOST_PROJECT_DIR = os.environ.get("HOST_PROJECT_DIR", PROJECT_DIR)
 
 default_args = {
     "owner": "mlops",
@@ -41,8 +43,10 @@ with DAG(
     deployment = BashOperator(
         task_id="deployment",
         bash_command=(
-            f"cd {PROJECT_DIR}/code/deployment && "
-            "docker compose up -d --build"
+            f'docker compose '
+            f'--project-directory "{HOST_PROJECT_DIR}/code/deployment" '
+            f'-f "{PROJECT_DIR}/code/deployment/docker-compose.yml" '
+            f'up -d --build'
         ),
     )
 

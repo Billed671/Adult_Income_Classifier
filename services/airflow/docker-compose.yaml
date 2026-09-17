@@ -1,0 +1,20 @@
+services:
+  airflow:
+    build: .
+    container_name: airflow
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+      - HOST_PROJECT_DIR=${HOST_PROJECT_DIR}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../..:/opt/airflow/project
+    command: >
+      bash -c "
+      airflow db migrate;
+      airflow standalone
+      "
